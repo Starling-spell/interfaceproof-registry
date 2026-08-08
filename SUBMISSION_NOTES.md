@@ -17,3 +17,7 @@ consensus requires exact equality of this whole record. `is_compatible` and
 **Limits:** Designed for public HTTPS GET/JSON interfaces. It proves a
 point-in-time compatible response, not credentials, write-operation behavior,
 or continuous availability.
+
+**Live contract:** https://explorer-studio.genlayer.com/address/0xaD2639c2a9dD38C8B1Ed8dD9d6781545Aa8CF9F7
+
+**Deployment transaction:** https://explorer-studio.genlayer.com/tx/0x226e14ef3d1a91c570f298e760d566558896b21ff5256cc7e5babda456a1a04d

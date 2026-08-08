@@ -1,0 +1,16 @@
+{
+  "name": "interfaceproof-registry",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy:studionet": "tsx scripts/deploy-studionet.ts"
+  },
+  "dependencies": {
+    "genlayer-js": "1.1.8"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.3",
+    "tsx": "4.19.2",
+    "typescript": "5.9.3"
+  }
+}

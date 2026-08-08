@@ -36,3 +36,11 @@ depending on the endpoint.
 genvm-lint check contracts\InterfaceProofRegistry.py --json
 python -m py_compile contracts\InterfaceProofRegistry.py
 ```
+
+## StudioNet deployment
+
+The registry is deployed at
+[`0xaD2639c2a9dD38C8B1Ed8dD9d6781545Aa8CF9F7`](https://explorer-studio.genlayer.com/address/0xaD2639c2a9dD38C8B1Ed8dD9d6781545Aa8CF9F7).
+Its [deployment transaction](https://explorer-studio.genlayer.com/tx/0x226e14ef3d1a91c570f298e760d566558896b21ff5256cc7e5babda456a1a04d)
+finalized on StudioNet. Live attestation evidence will be added after the
+registered public API revision is finalized.
