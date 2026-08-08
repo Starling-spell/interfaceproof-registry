@@ -15,7 +15,7 @@ import json
 import re
 from urllib.parse import urlencode, urlsplit
 
-POLICY_VERSION = "interfaceproof-v1"
+POLICY_VERSION = "interfaceproof-v3-server-bound"
 MAX_ID = 80
 MAX_URL = 500
 MAX_PATH = 180
@@ -85,14 +85,46 @@ def _canonical_query(raw: str) -> dict:
     return dict(sorted(result.items()))
 
 
+def _normalized_server(url: str) -> str:
+    """Canonical form for an absolute, query-free HTTPS OpenAPI server."""
+    try:
+        parsed = urlsplit(str(url).strip())
+    except Exception:
+        return ""
+    if (parsed.scheme != "https" or not parsed.netloc or parsed.query or parsed.fragment
+            or parsed.username or parsed.password):
+        return ""
+    return f"https://{parsed.netloc.lower()}{parsed.path.rstrip('/')}"
+
+
+def _declared_servers(document: dict, openapi_url: str) -> list:
+    servers = document.get("servers", []) if isinstance(document, dict) else []
+    result = []
+    for item in servers if isinstance(servers, list) else []:
+        if isinstance(item, dict):
+            raw = str(item.get("url", "")).strip()
+            # OpenAPI permits relative server URLs. Resolve them only against
+            # the immutable HTTPS specification URL; templates stay unsupported.
+            if raw.startswith("/"):
+                parsed_document = urlsplit(openapi_url)
+                raw = f"{parsed_document.scheme}://{parsed_document.netloc}{raw}"
+            server = _normalized_server(raw) if "{" not in raw else ""
+            if server:
+                result.append(server)
+    return sorted(set(result))
+
+
 def _operation(spec: dict) -> dict:
     """Canonical evidence derived from the spec itself, not leader-provided text."""
     _, document = _json_response(spec["openapi_url"])
+    declared_servers = _declared_servers(document, spec["openapi_url"])
+    base_server_declared = _normalized_server(spec["base_url"]) in declared_servers
     paths = document.get("paths", {}) if isinstance(document, dict) else {}
     path_item = paths.get(spec["operation_path"]) if isinstance(paths, dict) else None
     op = path_item.get(spec["method"]) if isinstance(path_item, dict) else None
     if not isinstance(op, dict):
-        return {"operation_present": False, "required_query_parameters": [], "operation_id": ""}
+        return {"operation_present": False, "required_query_parameters": [], "operation_id": "",
+                "declared_servers": declared_servers, "base_server_declared": base_server_declared}
     required = []
     inherited = path_item.get("parameters", []) if isinstance(path_item.get("parameters", []), list) else []
     own = op.get("parameters", []) if isinstance(op.get("parameters", []), list) else []
@@ -102,7 +134,8 @@ def _operation(spec: dict) -> dict:
             if name:
                 required.append(name)
     return {"operation_present": True, "required_query_parameters": sorted(set(required)),
-            "operation_id": str(op.get("operationId", ""))[:120]}
+            "operation_id": str(op.get("operationId", ""))[:120],
+            "declared_servers": declared_servers, "base_server_declared": base_server_declared}
 
 
 def _recompute(spec: dict) -> dict:
@@ -114,14 +147,17 @@ def _recompute(spec: dict) -> dict:
     # base URL, exact operation path, and canonical registered query parameters.
     probe_url = spec["base_url"].rstrip("/") + spec["operation_path"] + "?" + urlencode(spec["query"])
     probe_status, probe_json = _json_response(probe_url)
-    probe_matches_operation_path = urlsplit(probe_url).path == spec["operation_path"]
+    expected_probe_path = urlsplit(spec["base_url"]).path.rstrip("/") + spec["operation_path"]
+    probe_matches_operation_path = urlsplit(probe_url).path == expected_probe_path
     response_json = isinstance(probe_json, (dict, list))
-    compatible = bool(operation["operation_present"] and query_complete and probe_matches_operation_path
+    compatible = bool(operation["operation_present"] and operation["base_server_declared"] and query_complete and probe_matches_operation_path
                       and 200 <= probe_status < 300 and response_json)
     return {
         "compatible": compatible,
         "operation_present": operation["operation_present"],
         "operation_id": operation["operation_id"],
+        "declared_servers": operation["declared_servers"],
+        "base_server_declared": operation["base_server_declared"],
         "required_query_parameters": required,
         "declared_query_parameters": declared,
         "query_parameters_complete": query_complete,
@@ -134,6 +170,61 @@ def _recompute(spec: dict) -> dict:
 
 def _same_public(left: dict, right: dict) -> bool:
     return json.dumps(left, sort_keys=True, separators=(",", ":")) == json.dumps(right, sort_keys=True, separators=(",", ":"))
+
+
+def _validate_public_record(public: dict, spec: dict) -> dict:
+    """Validate consensus output without performing a second web fetch.
+
+    The substantive record has already been independently recomputed by every
+    validator. This deterministic pass binds all stored fields to each other and
+    to the immutable revision before state is written.
+    """
+    expected_keys = sorted([
+        "compatible", "operation_present", "operation_id", "declared_servers",
+        "base_server_declared", "required_query_parameters", "declared_query_parameters",
+        "query_parameters_complete", "probe_matches_operation_path", "probe_status",
+        "response_is_json", "probe_url",
+    ])
+    if not isinstance(public, dict) or sorted(public.keys()) != expected_keys:
+        raise gl.vm.UserError(f"{ERR_EXTERNAL} consensus returned an invalid public record")
+    boolean_fields = ["compatible", "operation_present", "base_server_declared",
+                      "query_parameters_complete", "probe_matches_operation_path", "response_is_json"]
+    if any(not isinstance(public.get(field), bool) for field in boolean_fields):
+        raise gl.vm.UserError(f"{ERR_EXTERNAL} consensus returned invalid boolean fields")
+    if not isinstance(public.get("probe_status"), int) or isinstance(public.get("probe_status"), bool):
+        raise gl.vm.UserError(f"{ERR_EXTERNAL} consensus returned invalid probe status")
+    if not isinstance(public.get("operation_id"), str):
+        raise gl.vm.UserError(f"{ERR_EXTERNAL} consensus returned invalid operation id")
+    declared_servers = public.get("declared_servers")
+    required = public.get("required_query_parameters")
+    declared = public.get("declared_query_parameters")
+    if not isinstance(declared_servers, list) or not isinstance(required, list) or not isinstance(declared, list):
+        raise gl.vm.UserError(f"{ERR_EXTERNAL} consensus returned invalid list fields")
+    if declared_servers != sorted(set([str(item) for item in declared_servers])):
+        raise gl.vm.UserError(f"{ERR_EXTERNAL} declared servers are not canonical")
+    if required != sorted(set([str(item) for item in required])):
+        raise gl.vm.UserError(f"{ERR_EXTERNAL} required parameters are not canonical")
+    expected_declared = sorted(spec["query"].keys())
+    if declared != expected_declared:
+        raise gl.vm.UserError(f"{ERR_EXTERNAL} declared parameters do not match revision")
+    expected_probe = spec["base_url"].rstrip("/") + spec["operation_path"] + "?" + urlencode(spec["query"])
+    if public.get("probe_url") != expected_probe:
+        raise gl.vm.UserError(f"{ERR_EXTERNAL} probe URL does not match revision")
+    expected_probe_path = urlsplit(spec["base_url"]).path.rstrip("/") + spec["operation_path"]
+    path_bound = urlsplit(expected_probe).path == expected_probe_path
+    server_bound = _normalized_server(spec["base_url"]) in declared_servers
+    query_complete = all(name in spec["query"] for name in required)
+    if public["probe_matches_operation_path"] != path_bound:
+        raise gl.vm.UserError(f"{ERR_EXTERNAL} probe path flag is inconsistent")
+    if public["base_server_declared"] != server_bound:
+        raise gl.vm.UserError(f"{ERR_EXTERNAL} server binding flag is inconsistent")
+    if public["query_parameters_complete"] != query_complete:
+        raise gl.vm.UserError(f"{ERR_EXTERNAL} query completeness flag is inconsistent")
+    expected_compatible = bool(public["operation_present"] and server_bound and query_complete and path_bound
+                               and 200 <= public["probe_status"] < 300 and public["response_is_json"])
+    if public["compatible"] != expected_compatible:
+        raise gl.vm.UserError(f"{ERR_EXTERNAL} compatibility flag is inconsistent")
+    return public
 
 
 class InterfaceProofRegistry(gl.Contract):
@@ -156,10 +247,10 @@ class InterfaceProofRegistry(gl.Contract):
         revision_id = _id(revision_id, "revision id")
         if self.revision_json.get(revision_id, ""):
             raise gl.vm.UserError(f"{ERR_EXPECTED} revision already exists")
-        openapi_url, base_url = str(openapi_url).strip(), str(base_url).strip().rstrip("/")
+        openapi_url, base_url = str(openapi_url).strip(), _normalized_server(base_url)
         operation_path, method = str(operation_path).strip(), str(method).strip().lower()
-        if not _public_https(openapi_url) or not _public_https(base_url):
-            raise gl.vm.UserError(f"{ERR_EXPECTED} URLs must be public HTTPS")
+        if not _public_https(openapi_url) or not base_url or not _public_https(base_url):
+            raise gl.vm.UserError(f"{ERR_EXPECTED} URLs must be public HTTPS without query or fragment")
         if len(operation_path) < 2 or len(operation_path) > MAX_PATH or not operation_path.startswith("/") or "?" in operation_path:
             raise gl.vm.UserError(f"{ERR_EXPECTED} invalid operation path")
         if method != "get":
@@ -196,10 +287,7 @@ class InterfaceProofRegistry(gl.Contract):
         result = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
         try:
             public = result.get("public")
-            locally_recomputed = _recompute(spec)
-            if not isinstance(public, dict) or not _same_public(public, locally_recomputed):
-                raise gl.vm.UserError(f"{ERR_EXTERNAL} leader record is not bound to canonical recomputation")
-            return public
+            return _validate_public_record(public, spec)
         except gl.vm.UserError:
             raise
         except Exception:
@@ -241,6 +329,7 @@ class InterfaceProofRegistry(gl.Contract):
     def is_compatible(self, attestation_id: str) -> bool:
         record = self.get_attestation(attestation_id)
         return bool(record.get("verified") is True and record.get("compatible") is True
+                    and record.get("base_server_declared") is True
                     and record.get("probe_matches_operation_path") is True
                     and record.get("query_parameters_complete") is True)
 
