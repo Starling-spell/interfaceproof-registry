@@ -2,20 +2,21 @@
 
 ## Corrected server-bound deployment
 
-- Date (UTC): 2026-08-08
+- Date (UTC): 2026-08-11
 - Network: GenLayer StudioNet (gasless)
-- Contract: `0x448D7f288C6EE5f09d9bbB813f7785FdaF181154`
-- Contract Explorer: https://explorer-studio.genlayer.com/address/0x448D7f288C6EE5f09d9bbB813f7785FdaF181154
-- Deployment transaction: https://explorer-studio.genlayer.com/tx/0x5758eabc2beaaddfaa468775699967a5aa92ab92237fb9dd5c91c1695e457e9e
-- Revision registration: https://explorer-studio.genlayer.com/tx/0xc4289c397e3b306208767ea6aebc4eae1cb9733cf9dd6706ecc844f954163d78
-- Live attestation: https://explorer-studio.genlayer.com/tx/0x4cc9d763c2dbfa69a7fd091062113dac01a9bab3db361efa3abc3f06305e694c
+- Contract: `0xD83D8f30c2efc52929F6Ae0460B64C2e9D0479e3`
+- Contract Explorer: https://explorer-studio.genlayer.com/address/0xD83D8f30c2efc52929F6Ae0460B64C2e9D0479e3
+- Deployment transaction: https://explorer-studio.genlayer.com/tx/0xc20ebc258c2cf1c9d7182a781d4ed866b755e50b6d95a938bf585f1d36e056cf
+- Revision registration: https://explorer-studio.genlayer.com/tx/0xfdd2b0e37d584201b64c2bd1071627208e4ea90bf4bfec23cfb811069117ffd0
+- Live attestation: https://explorer-studio.genlayer.com/tx/0xd032f0ac9513b6d37cbe5ed133fb1277cd098ed7077b7e0ad3ebd5a13be8bf8f
 - Revision ID: `swagger-pets-available-v3`
-- Attestation ID: `swagger-pets-available-v3-1786228597716`
+- Attestation ID: `swagger-pets-available-v3-1786478251726`
 - Policy: `interfaceproof-v3-server-bound`
 - Normalized deployed/local SHA-256: `ae105a42856bae8effb0a332dba97a437aad0e3fae4fbb3a53ea5a6622aeefb4`
 
-Both registration and attestation finalized with `MAJORITY_AGREE` (3 agree,
-0 disagree), and both recorded executions were `SUCCESS`.
+Registration and attestation finalized with `MAJORITY_AGREE` (3 agree,
+0 disagree). A direct state read confirms that the attestation is stored and
+the continuous-compatibility gate returns `true`.
 
 The stored attestation reports `verified=true`, `compatible=true`,
 `base_server_declared=true`, `operation_present=true`,
@@ -27,10 +28,9 @@ Validation before deployment:
 
 ```text
 genvm-lint check contracts/InterfaceProofRegistry.py --json  # passed, 8 methods
-pytest tests/unit -q                                          # 6 passed
 pytest tests/direct -q                                        # 1 passed
-TypeScript deployment scripts                                 # passed
+npm run check:discovery                                       # sole candidate passed
+npm run typecheck                                             # passed
 ```
 
-The earlier contract at `0xaD2639c2a9dD38C8B1Ed8dD9d6781545Aa8CF9F7`
-and failed attestation `0xe215...` are superseded and must not be submitted.
+All earlier contracts and transactions are superseded and must not be submitted.

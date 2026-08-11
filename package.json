@@ -3,8 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "check:discovery": "tsx scripts/check-contract-discovery.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "deploy:studionet": "tsx scripts/deploy-studionet.ts",
     "attest:studionet": "tsx scripts/attest-studionet.ts",
+    "read:proof": "tsx scripts/read-proof.ts",
     "verify:deployment": "tsx scripts/verify-deployment.ts"
   },
   "dependencies": {

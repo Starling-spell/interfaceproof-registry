@@ -6,8 +6,8 @@ const address = process.env.CONTRACT_ADDRESS as `0x${string}` | undefined;
 if (!address) throw new Error("Set CONTRACT_ADDRESS.");
 const account = createAccount();
 const client = createClient({ chain: studionet, account });
-const revisionId = "swagger-pets-available-v2";
-const attestationId = `swagger-pets-available-v2-${Date.now()}`;
+const revisionId = process.env.REVISION_ID ?? "swagger-pets-available-v3";
+const attestationId = `${revisionId}-${Date.now()}`;
 
 const hash = await client.writeContract({
   address, functionName: "attest_interface", args: [revisionId, attestationId], account, value: 0n,

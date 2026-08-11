@@ -18,8 +18,14 @@ request. `is_compatible` and `is_continuously_compatible` are composable gates.
 **Limits:** Public HTTPS GET/JSON interfaces only. This proves point-in-time
 compatibility, not credentials, write behavior or continuous availability.
 
-**Live contract:** https://explorer-studio.genlayer.com/address/0x448D7f288C6EE5f09d9bbB813f7785FdaF181154
+**Correction:** Removed the contract-source-executing unit helper that frozen
+GenVM discovery selected incorrectly. The repository guard now proves the
+deployable contract is the sole contract-source candidate.
 
-**Deployment transaction:** https://explorer-studio.genlayer.com/tx/0x5758eabc2beaaddfaa468775699967a5aa92ab92237fb9dd5c91c1695e457e9e
+**Live contract:** https://explorer-studio.genlayer.com/address/0xD83D8f30c2efc52929F6Ae0460B64C2e9D0479e3
 
-**Live attestation:** https://explorer-studio.genlayer.com/tx/0x4cc9d763c2dbfa69a7fd091062113dac01a9bab3db361efa3abc3f06305e694c
+**Deployment transaction:** https://explorer-studio.genlayer.com/tx/0xc20ebc258c2cf1c9d7182a781d4ed866b755e50b6d95a938bf585f1d36e056cf
+
+**Revision registration:** https://explorer-studio.genlayer.com/tx/0xfdd2b0e37d584201b64c2bd1071627208e4ea90bf4bfec23cfb811069117ffd0
+
+**Live attestation:** https://explorer-studio.genlayer.com/tx/0xd032f0ac9513b6d37cbe5ed133fb1277cd098ed7077b7e0ad3ebd5a13be8bf8f
