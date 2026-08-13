@@ -7,6 +7,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "deploy:studionet": "tsx scripts/deploy-studionet.ts",
     "attest:studionet": "tsx scripts/attest-studionet.ts",
+    "prove:negative-freshness": "tsx scripts/prove-negative-freshness.ts",
     "read:proof": "tsx scripts/read-proof.ts",
     "verify:deployment": "tsx scripts/verify-deployment.ts"
   },

@@ -31,14 +31,18 @@ async function write(functionName: string, args: any[]) {
     hash: hash as never, status: TransactionStatus.FINALIZED, interval: 5000, retries: 180,
   }) as Record<string, unknown>;
   const consensus = result.consensus_data as { votes?: Record<string, string> } | undefined;
-  const leaderReceipts = (consensus as { leader_receipt?: Array<{ execution_result?: string }> } | undefined)?.leader_receipt ?? [];
+  const leaderReceipts = (consensus as { leader_receipt?: Array<{ execution_result?: string; genvm_result?: { error_code?: string } }> } | undefined)?.leader_receipt ?? [];
   const executions = leaderReceipts.map((item) => item.execution_result ?? "UNKNOWN");
   const votes = Object.values(consensus?.votes ?? {});
   const summary = { hash, status: result.status_name, consensus: result.result_name,
     agree: votes.filter((vote) => vote === "agree").length,
     disagree: votes.filter((vote) => vote === "disagree").length, executions };
   console.log(`${functionName}Result=${JSON.stringify(summary)}`);
-  if (executions.some((execution) => execution !== "SUCCESS")) {
+  const fatal = leaderReceipts.filter((item) =>
+    item.execution_result !== "SUCCESS" &&
+    item.genvm_result?.error_code !== "CONSENSUS_VALIDATOR_QUORUM_REACHED"
+  );
+  if (result.result_name !== "MAJORITY_AGREE" || fatal.length > 0) {
     throw new Error(`${functionName} finalized with execution failure`);
   }
   return summary;

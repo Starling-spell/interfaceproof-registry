@@ -15,7 +15,7 @@ import json
 import re
 from urllib.parse import urlencode, urlsplit
 
-POLICY_VERSION = "interfaceproof-v3-server-bound"
+POLICY_VERSION = "interfaceproof-v4-negative-freshness"
 MAX_ID = 80
 MAX_URL = 500
 MAX_PATH = 180
@@ -67,6 +67,29 @@ def _json_response(url: str):
         return status, json.loads(str(body))
     except Exception:
         raise gl.vm.UserError(f"{ERR_EXTERNAL} invalid JSON response")
+
+
+def _probe_response(url: str) -> dict:
+    """Total probe outcome: endpoint failures become consensus-stored negatives."""
+    try:
+        response = gl.nondet.web.get(url, headers={"Accept": "application/json", "User-Agent": "InterfaceProof/1"})
+    except Exception:
+        return {"probe_status": 0, "probe_outcome": "REQUEST_FAILED", "response_is_json": False}
+    status = int(getattr(response, "status", 0) or 0)
+    body = getattr(response, "body", b"")
+    if isinstance(body, bytes):
+        body = body.decode("utf-8", errors="ignore")
+    if 400 <= status < 500:
+        return {"probe_status": status, "probe_outcome": "HTTP_4XX", "response_is_json": False}
+    if status == 0 or status >= 500:
+        return {"probe_status": status, "probe_outcome": "HTTP_5XX", "response_is_json": False}
+    try:
+        parsed = json.loads(str(body))
+        is_json = isinstance(parsed, (dict, list))
+    except Exception:
+        is_json = False
+    return {"probe_status": status, "probe_outcome": "OK_JSON" if is_json else "INVALID_JSON",
+            "response_is_json": is_json}
 
 
 def _canonical_query(raw: str) -> dict:
@@ -146,12 +169,13 @@ def _recompute(spec: dict) -> dict:
     # Operation-path binding: this URL is always constructed from the immutable
     # base URL, exact operation path, and canonical registered query parameters.
     probe_url = spec["base_url"].rstrip("/") + spec["operation_path"] + "?" + urlencode(spec["query"])
-    probe_status, probe_json = _json_response(probe_url)
+    probe = _probe_response(probe_url)
+    probe_status = probe["probe_status"]
     expected_probe_path = urlsplit(spec["base_url"]).path.rstrip("/") + spec["operation_path"]
     probe_matches_operation_path = urlsplit(probe_url).path == expected_probe_path
-    response_json = isinstance(probe_json, (dict, list))
+    response_json = probe["response_is_json"]
     compatible = bool(operation["operation_present"] and operation["base_server_declared"] and query_complete and probe_matches_operation_path
-                      and 200 <= probe_status < 300 and response_json)
+                      and probe["probe_outcome"] == "OK_JSON" and 200 <= probe_status < 300 and response_json)
     return {
         "compatible": compatible,
         "operation_present": operation["operation_present"],
@@ -163,6 +187,7 @@ def _recompute(spec: dict) -> dict:
         "query_parameters_complete": query_complete,
         "probe_matches_operation_path": probe_matches_operation_path,
         "probe_status": probe_status,
+        "probe_outcome": probe["probe_outcome"],
         "response_is_json": response_json,
         "probe_url": probe_url,
     }
@@ -183,7 +208,7 @@ def _validate_public_record(public: dict, spec: dict) -> dict:
         "compatible", "operation_present", "operation_id", "declared_servers",
         "base_server_declared", "required_query_parameters", "declared_query_parameters",
         "query_parameters_complete", "probe_matches_operation_path", "probe_status",
-        "response_is_json", "probe_url",
+        "response_is_json", "probe_outcome", "probe_url",
     ])
     if not isinstance(public, dict) or sorted(public.keys()) != expected_keys:
         raise gl.vm.UserError(f"{ERR_EXTERNAL} consensus returned an invalid public record")
@@ -193,6 +218,8 @@ def _validate_public_record(public: dict, spec: dict) -> dict:
         raise gl.vm.UserError(f"{ERR_EXTERNAL} consensus returned invalid boolean fields")
     if not isinstance(public.get("probe_status"), int) or isinstance(public.get("probe_status"), bool):
         raise gl.vm.UserError(f"{ERR_EXTERNAL} consensus returned invalid probe status")
+    if public.get("probe_outcome") not in ["OK_JSON", "HTTP_4XX", "HTTP_5XX", "REQUEST_FAILED", "INVALID_JSON"]:
+        raise gl.vm.UserError(f"{ERR_EXTERNAL} consensus returned invalid probe outcome")
     if not isinstance(public.get("operation_id"), str):
         raise gl.vm.UserError(f"{ERR_EXTERNAL} consensus returned invalid operation id")
     declared_servers = public.get("declared_servers")
@@ -221,6 +248,7 @@ def _validate_public_record(public: dict, spec: dict) -> dict:
     if public["query_parameters_complete"] != query_complete:
         raise gl.vm.UserError(f"{ERR_EXTERNAL} query completeness flag is inconsistent")
     expected_compatible = bool(public["operation_present"] and server_bound and query_complete and path_bound
+                               and public["probe_outcome"] == "OK_JSON"
                                and 200 <= public["probe_status"] < 300 and public["response_is_json"])
     if public["compatible"] != expected_compatible:
         raise gl.vm.UserError(f"{ERR_EXTERNAL} compatibility flag is inconsistent")
@@ -231,6 +259,7 @@ class InterfaceProofRegistry(gl.Contract):
     revision_json: TreeMap[str, str]
     attestation_json: TreeMap[str, str]
     latest_by_revision: TreeMap[str, str]
+    latest_sequence_by_revision: TreeMap[str, u256]
     revision_creator: TreeMap[str, Address]
     revision_ids: DynArray[str]
     attestation_ids: DynArray[str]
@@ -302,11 +331,14 @@ class InterfaceProofRegistry(gl.Contract):
         if not encoded:
             raise gl.vm.UserError(f"{ERR_EXPECTED} revision not found")
         spec, public = json.loads(encoded), self._attest(json.loads(encoded))
+        sequence = int(self.attestation_count) + 1
         record = {"attestation_id": attestation_id, "revision_id": revision_id, "verified": True,
+                  "attestation_sequence": sequence,
                   "verification_mode": "exact-recomputed-interface-record", "policy_version": POLICY_VERSION,
                   "attester": str(gl.message.sender_address), **public}
         self.attestation_json[attestation_id] = json.dumps(record, sort_keys=True)
         self.latest_by_revision[revision_id] = attestation_id
+        self.latest_sequence_by_revision[revision_id] = u256(sequence)
         self.attestation_ids.append(attestation_id)
         self.attestation_count = u256(int(self.attestation_count) + 1)
         return record
@@ -335,10 +367,30 @@ class InterfaceProofRegistry(gl.Contract):
 
     @gl.public.view
     def is_continuously_compatible(self, revision_id: str) -> bool:
-        """Consumer gate for the most recently finalized immutable attestation."""
+        """Strict latest-result gate; any stored negative immediately closes it."""
         revision_id = _id(revision_id, "revision id")
         latest = self.latest_by_revision.get(revision_id, "")
         return bool(latest) and self.is_compatible(latest)
+
+    @gl.public.view
+    def is_fresh_and_compatible(self, revision_id: str, max_age_attestations: u256) -> bool:
+        """Compatibility plus explicit logical freshness against registry sequence."""
+        revision_id = _id(revision_id, "revision id")
+        latest = self.latest_by_revision.get(revision_id, "")
+        if not latest:
+            return False
+        latest_sequence = int(self.latest_sequence_by_revision.get(revision_id, u256(0)))
+        age = int(self.attestation_count) - latest_sequence
+        return age <= int(max_age_attestations) and self.is_compatible(latest)
+
+    @gl.public.view
+    def get_freshness(self, revision_id: str) -> dict:
+        revision_id = _id(revision_id, "revision id")
+        latest = self.latest_by_revision.get(revision_id, "")
+        latest_sequence = int(self.latest_sequence_by_revision.get(revision_id, u256(0)))
+        return {"has_attestation": bool(latest), "latest_attestation_id": latest,
+                "latest_sequence": latest_sequence, "current_sequence": int(self.attestation_count),
+                "age_attestations": int(self.attestation_count) - latest_sequence if latest else 0}
 
     @gl.public.view
     def get_latest(self, revision_id: str) -> dict:
@@ -352,4 +404,5 @@ class InterfaceProofRegistry(gl.Contract):
         return {"name": "InterfaceProof Registry", "policy_version": POLICY_VERSION,
                 "purpose": "Reusable consensus primitive for verifying public OpenAPI operation compatibility.",
                 "consensus": "Validators independently fetch the specification and bound live operation, then require exact equality of the recomputed public record.",
-                "consumer_gates": ["is_compatible", "is_continuously_compatible"]}
+                "freshness_unit": "finalized registry attestations since this revision's latest result",
+                "consumer_gates": ["is_compatible", "is_continuously_compatible", "is_fresh_and_compatible"]}
